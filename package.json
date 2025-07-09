@@ -5,7 +5,6 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
     "dev": "node --watch server.js",
     "multi-client": "node multi-mcp-app.js",
     "test-basic": "node mcp-servers/basic-tools/server.js",
