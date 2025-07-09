@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import readline from 'readline';
-import { MultiMCPClient } from './multi-mcp-client.js';
+import { MCPClient } from './lib/mcp-client.js';
 import { MultiAnthropicLLM } from './multi-anthropic-llm.js';
 import dotenv from 'dotenv';
 
@@ -12,7 +12,12 @@ dotenv.config();
  */
 class MultiMCPApp {
   constructor() {
-    this.mcpClient = new MultiMCPClient();
+    this.mcpClient = new MCPClient({
+      debug: true,
+      timeout: 15000,
+      autoReconnect: true,
+      maxReconnectAttempts: 3
+    });
     this.llm = null;
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -42,6 +47,9 @@ class MultiMCPApp {
       } else {
         console.log('✅ Running in offline mode');
       }
+
+      // Set up event listeners for the new MCPClient
+      this.setupEventListeners();
 
       // Add MCP servers
       console.log('🔌 Adding MCP servers...');
@@ -101,12 +109,78 @@ class MultiMCPApp {
       console.log('  • Web services (HTTP requests, weather, translation, currency)');
       console.log('  • General questions and conversations');
       console.log('\nThe LLM will automatically choose the most appropriate server and tool for your request.');
-      console.log('\nType "quit" to exit.\n');
+      console.log('\nType "quit" to exit.');
+      console.log('Type "status" to see server status and metrics.');
+      console.log('Type "health" to check server health.\n');
 
     } catch (error) {
       console.error('❌ Failed to initialize:', error.message);
       process.exit(1);
     }
+  }
+
+  /**
+   * Set up event listeners for the new MCPClient
+   */
+  setupEventListeners() {
+    // Connection events
+    this.mcpClient.on('connected', (data) => {
+      console.log(`✅ Connected to ${data.serverCount} MCP servers`);
+    });
+
+    this.mcpClient.on('connectionFailed', (data) => {
+      console.error(`❌ Connection failed: ${data.error}`);
+    });
+
+    this.mcpClient.on('disconnected', () => {
+      console.log('🔌 Disconnected from all MCP servers');
+    });
+
+    // Server events
+    this.mcpClient.on('serverAdded', (data) => {
+      console.log(`🔌 Added server: ${data.name}`);
+    });
+
+    this.mcpClient.on('serverInitialized', (data) => {
+      console.log(`✅ Server ${data.server} initialized with ${data.toolCount} tools and ${data.resourceCount} resources`);
+    });
+
+    this.mcpClient.on('serverDisconnected', (data) => {
+      console.log(`⚠️  Server ${data.server} disconnected (code: ${data.code}, signal: ${data.signal})`);
+    });
+
+    this.mcpClient.on('serverUnhealthy', (data) => {
+      console.log(`⚠️  Server ${data.server} is unhealthy: ${data.error}`);
+    });
+
+    // Tool and resource events
+    this.mcpClient.on('toolCalled', (data) => {
+      console.log(`🔧 Tool called: ${data.server}:${data.tool}`);
+    });
+
+    this.mcpClient.on('resourceRead', (data) => {
+      console.log(`📁 Resource read: ${data.server}:${data.uri}`);
+    });
+
+    // Request events
+    this.mcpClient.on('requestCompleted', (data) => {
+      if (data.success) {
+        console.log(`✅ Request completed: ${data.server}:${data.method} (${data.responseTime}ms)`);
+      } else {
+        console.error(`❌ Request failed: ${data.server}:${data.method} - ${data.error}`);
+      }
+    });
+
+    // Error events
+    this.mcpClient.on('error', (data) => {
+      console.error(`❌ Server error: ${data.server} - ${data.error}`);
+    });
+
+    this.mcpClient.on('serverLog', (data) => {
+      if (data.level === 'stderr') {
+        console.log(`[${data.server}] ${data.message}`);
+      }
+    });
   }
 
   /**
@@ -216,8 +290,62 @@ class MultiMCPApp {
     console.log('  • "calculate 2 + 2" - Perform calculations');
   }
 
+  /**
+   * Show server status and metrics
+   */
+  showStatus() {
+    console.log('\n📊 Server Status:');
+    const status = this.mcpClient.getServerStatus();
+    for (const [server, info] of Object.entries(status)) {
+      const healthIcon = info.health?.healthy ? '✅' : '❌';
+      console.log(`  ${healthIcon} ${server}:`);
+      console.log(`    Connected: ${info.connected ? 'Yes' : 'No'}`);
+      console.log(`    Tools: ${info.toolCount}`);
+      console.log(`    Resources: ${info.resourceCount}`);
+      console.log(`    Reconnect attempts: ${info.reconnectAttempts}`);
+      if (info.health) {
+        console.log(`    Health: ${info.health.healthy ? 'Healthy' : 'Unhealthy'}`);
+        if (info.health.error) {
+          console.log(`    Error: ${info.health.error}`);
+        }
+      }
+    }
+
+    console.log('\n📈 Performance Metrics:');
+    const metrics = this.mcpClient.getMetrics();
+    console.log(`  Total requests: ${metrics.totalRequests}`);
+    console.log(`  Successful: ${metrics.successfulRequests}`);
+    console.log(`  Failed: ${metrics.failedRequests}`);
+    console.log(`  Success rate: ${metrics.totalRequests > 0 ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(1) : 0}%`);
+    console.log(`  Average response time: ${metrics.averageResponseTime.toFixed(0)}ms`);
+  }
+
   async processUserInput(userInput) {
     try {
+      // Handle special commands
+      if (userInput.toLowerCase() === 'status') {
+        this.showStatus();
+        return;
+      }
+
+      if (userInput.toLowerCase() === 'health') {
+        console.log('\n🏥 Running health check...');
+        const status = this.mcpClient.getServerStatus();
+        for (const [server, info] of Object.entries(status)) {
+          if (info.connected) {
+            try {
+              await this.mcpClient.callTool(server, 'get_current_time', {});
+              console.log(`✅ ${server}: Healthy`);
+            } catch (error) {
+              console.log(`❌ ${server}: Unhealthy - ${error.message}`);
+            }
+          } else {
+            console.log(`❌ ${server}: Not connected`);
+          }
+        }
+        return;
+      }
+
       // If in offline mode, use fallback command parser
       if (this.offlineMode) {
         await this.processFallbackCommand(userInput);
