@@ -102,6 +102,8 @@ If someone asks "what's the weather in London?", you would respond:
   }
 }
 
+For multi-step requests (like "get system info and write to file"), start with the first step. The system will then ask you if you need to call another tool to complete the task.
+
 If the user's request requires multiple tools or can be done with different tools, choose the most appropriate one. If the user's request doesn't require calling a tool, respond normally with helpful information.
 
 Always respond with valid JSON when calling tools, and regular text for normal conversations.`;

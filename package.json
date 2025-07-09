@@ -7,9 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "client": "node index.js",
     "multi-client": "node multi-mcp-app.js",
-    "test": "node test-client.js",
     "test-basic": "node mcp-servers/basic-tools/server.js",
     "test-file": "node mcp-servers/file-operations/server.js",
     "test-web": "node mcp-servers/web-services/server.js"
