@@ -102,11 +102,15 @@ If someone asks "what's the weather in London?", you would respond:
   }
 }
 
-For multi-step requests (like "get system info and write to file"), start with the first step. The system will then ask you if you need to call another tool to complete the task.
+For multi-step requests, the system will iterate and ask you if more tools are needed. When the task is complete, respond with:
+{
+  "action": "final_answer",
+  "content": "Your natural language summary of what was accomplished"
+}
 
 If the user's request requires multiple tools or can be done with different tools, choose the most appropriate one. If the user's request doesn't require calling a tool, respond normally with helpful information.
 
-Always respond with valid JSON when calling tools, and regular text for normal conversations.`;
+Always respond with valid JSON when calling tools or providing final answers, and regular text for normal conversations.`;
 
     return prompt;
   }
@@ -134,7 +138,7 @@ Always respond with valid JSON when calling tools, and regular text for normal c
 
       const responseText = response.content[0].text.trim();
       
-      // Try to parse as JSON to see if it's a tool call
+      // Try to parse as JSON to see if it's a tool call or final answer
       try {
         const parsed = JSON.parse(responseText);
         if (parsed.action === 'call_tool') {
@@ -143,6 +147,11 @@ Always respond with valid JSON when calling tools, and regular text for normal c
             server: parsed.server,
             tool_name: parsed.tool_name,
             arguments: parsed.arguments
+          };
+        } else if (parsed.action === 'final_answer') {
+          return {
+            type: 'final_answer',
+            content: parsed.content
           };
         }
       } catch (e) {
