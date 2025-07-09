@@ -252,12 +252,46 @@ class MultiMCPApp {
     let currentResult = firstResult;
     let stepCount = 0;
     const maxSteps = 10; // Prevent infinite loops
+    const toolCallHistory = []; // Track tool calls to detect loops
 
     while (stepCount < maxSteps) {
       stepCount++;
       
       if (currentResult.type === 'tool_call') {
         console.log(`🔧 Step ${stepCount}: Calling tool: ${currentResult.tool_name} on server: ${currentResult.server}`);
+        
+        // Track this tool call
+        const toolCall = `${currentResult.server}:${currentResult.tool_name}`;
+        toolCallHistory.push(toolCall);
+        
+        // Check for loops (same tool called 3+ times OR alternating pattern)
+        const recentCalls = toolCallHistory.slice(-6); // Check last 6 calls
+        if (recentCalls.length >= 4) { // Reduced from 6 to 4
+          // Check for alternating pattern (A-B-A-B)
+          const isAlternating = recentCalls.length >= 4 && 
+            recentCalls[0] === recentCalls[2] && 
+            recentCalls[1] === recentCalls[3] &&
+            recentCalls[0] !== recentCalls[1];
+          
+          // Check for same tool repeated
+          const isRepeating = recentCalls.slice(-3).every(call => call === toolCall);
+          
+          if (isAlternating || isRepeating) {
+            console.log('⚠️  Detected tool call loop. Forcing final answer...');
+            const forcedPrompt = `You have been calling tools in a loop. 
+            
+            Original user request: "${originalRequest}"
+            
+            You have gathered the necessary information. Now STOP calling tools and provide a final answer:
+            {
+              "action": "final_answer",
+              "content": "Based on the information gathered, here's what I found: [summarize the results]"
+            }`;
+            
+            currentResult = await this.llm.processUserInput(forcedPrompt, allTools, allResources);
+            continue;
+          }
+        }
         
         // Call the MCP tool
         const toolResult = await this.mcpClient.callTool(currentResult.server, currentResult.tool_name, currentResult.arguments);
@@ -269,29 +303,36 @@ class MultiMCPApp {
 
         // Check if we need to continue with more steps
         const toolResultText = toolResult.content[0].text;
-        const followUpPrompt = `The tool "${currentResult.tool_name}" returned: ${toolResultText}. 
+        
+        // Create a more specific follow-up prompt based on the original request
+        let followUpPrompt = `The tool "${currentResult.tool_name}" returned: ${toolResultText}. 
         
         Original user request: "${originalRequest}"
         
-        CRITICAL: You MUST analyze if the user's request is complete or if another tool call is needed.
+        TASK ANALYSIS:`;
         
-        If the task requires another step, respond with JSON format:
-        {
-          "action": "call_tool",
-          "server": "server_name",
-          "tool_name": "tool_name",
-          "arguments": {
-            "param1": "value1"
-          }
+        // Add specific guidance based on the request content
+        if (originalRequest.toLowerCase().includes('write') && originalRequest.toLowerCase().includes('file')) {
+          followUpPrompt += `
+        - The user wants information AND wants it written to a file
+        - You have gathered information, now you need to write it to a file
+        - If you haven't written to a file yet, call the write_file tool
+        - If you have written to a file, the task is complete`;
+        } else {
+          followUpPrompt += `
+        - Determine if you have gathered ALL the information requested
+        - If you need more information, continue with another tool call
+        - If you have enough information, provide a final answer`;
         }
         
-        If the task is complete, respond with:
-        {
-          "action": "final_answer",
-          "content": "Your natural language summary of what was accomplished"
-        }
+        followUpPrompt += `
         
-        IMPORTANT: Keep iterating with tool calls until the user's request is fully satisfied, then use final_answer.`;
+        DECISION: 
+        - If you need to write to a file, call: write_file tool
+        - If you need more information, call: appropriate tool
+        - If the task is complete, provide: final_answer
+        
+        Respond with ONLY the JSON object, no explanatory text.`;
 
         currentResult = await this.llm.processUserInput(followUpPrompt, allTools, allResources);
       } else if (currentResult.type === 'final_answer') {
@@ -308,6 +349,10 @@ class MultiMCPApp {
 
     if (stepCount >= maxSteps) {
       console.log(`\n⚠️  Reached maximum number of steps (${maxSteps}). Stopping execution.`);
+      console.log('🤖 Here\'s a summary of what was accomplished:');
+      console.log(`  • Gathered information from ${stepCount} tool calls`);
+      console.log(`  • Original request: "${originalRequest}"`);
+      console.log('  • Please try a more specific request or use single-step commands.');
     }
   }
 

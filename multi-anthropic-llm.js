@@ -65,7 +65,7 @@ Available Tools (organized by server):
       prompt += '\n';
     }
 
-    prompt += `When a user asks for something that requires calling a tool, respond with a JSON object in this exact format:
+    prompt += `When a user asks for something that requires calling a tool, respond with ONLY a JSON object in this exact format:
 {
   "action": "call_tool",
   "server": "server_name",
@@ -76,7 +76,9 @@ Available Tools (organized by server):
   }
 }
 
-For example, if someone asks "what time is it?", you would respond:
+IMPORTANT: Do NOT include any explanatory text before or after the JSON. Respond with ONLY the JSON object.
+
+For example, if someone asks "what time is it?", you would respond with ONLY:
 {
   "action": "call_tool",
   "server": "basic-tools",
@@ -84,7 +86,7 @@ For example, if someone asks "what time is it?", you would respond:
   "arguments": {}
 }
 
-If someone asks "list files in the current directory", you would respond:
+If someone asks "list files in the current directory", you would respond with ONLY:
 {
   "action": "call_tool",
   "server": "file-operations",
@@ -92,7 +94,7 @@ If someone asks "list files in the current directory", you would respond:
   "arguments": {}
 }
 
-If someone asks "what's the weather in London?", you would respond:
+If someone asks "what's the weather in London?", you would respond with ONLY:
 {
   "action": "call_tool",
   "server": "web-services",
@@ -102,7 +104,9 @@ If someone asks "what's the weather in London?", you would respond:
   }
 }
 
-For multi-step requests, the system will iterate and ask you if more tools are needed. When the task is complete, respond with:
+For multi-step requests that include file operations (like "get time and write to file"), start with the information gathering tool first.
+
+For multi-step requests, the system will iterate and ask you if more tools are needed. When the task is complete, respond with ONLY:
 {
   "action": "final_answer",
   "content": "Your natural language summary of what was accomplished"
@@ -110,7 +114,7 @@ For multi-step requests, the system will iterate and ask you if more tools are n
 
 If the user's request requires multiple tools or can be done with different tools, choose the most appropriate one. If the user's request doesn't require calling a tool, respond normally with helpful information.
 
-Always respond with valid JSON when calling tools or providing final answers, and regular text for normal conversations.`;
+CRITICAL: Always respond with ONLY valid JSON when calling tools or providing final answers, and regular text for normal conversations. Never mix JSON with explanatory text.`;
 
     return prompt;
   }
@@ -138,7 +142,37 @@ Always respond with valid JSON when calling tools or providing final answers, an
 
       const responseText = response.content[0].text.trim();
       
-      // Try to parse as JSON to see if it's a tool call or final answer
+      // Debug: Log the raw response for troubleshooting
+      if (responseText.includes('{') && responseText.includes('}')) {
+        console.log('🔍 Debug: LLM response contains JSON-like content');
+        console.log('Raw response:', responseText.substring(0, 200) + (responseText.length > 200 ? '...' : ''));
+      }
+      
+      // Try to extract JSON from the response (handles mixed text + JSON)
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.action === 'call_tool') {
+            return {
+              type: 'tool_call',
+              server: parsed.server,
+              tool_name: parsed.tool_name,
+              arguments: parsed.arguments
+            };
+          } else if (parsed.action === 'final_answer') {
+            return {
+              type: 'final_answer',
+              content: parsed.content
+            };
+          }
+        } catch (e) {
+          // JSON parsing failed, continue to treat as regular response
+          console.log('⚠️  Failed to parse JSON from response:', e.message);
+        }
+      }
+
+      // Try to parse as pure JSON first (for backward compatibility)
       try {
         const parsed = JSON.parse(responseText);
         if (parsed.action === 'call_tool') {
